@@ -1,4 +1,6 @@
 [package]
+description = "ternary-vu - SuperInstance ecosystem crate"
+repository = "https://github.com/SuperInstance/ternary-vu"
 name = "ternary-vu"
 version = "0.1.0"
 edition = "2021"
