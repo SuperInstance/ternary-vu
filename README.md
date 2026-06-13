@@ -1,68 +1,145 @@
 # ternary-vu
 
-**Metering for ternary audio. Peak, RMS, crest factor — the vital signs of your signal.**
+Signal analysis and VU (Volume Unit) metering for **ternary signals** — discrete-valued audio-like signals over the alphabet {-1, 0, +1}. Provides peak, RMS, crest factor, zero-crossing rate, DC offset, stereo balance, and correlation metrics. `#![forbid(unsafe_code)]`.
 
-Every mixing console has meters. They tell you what your ears can't: is the signal too loud? Too quiet? Is it transient (high crest factor, like drums) or sustained (low crest factor, like a synth pad)? Is it clipping? The meters are the doctor's chart — objective vital signs for subjective sound.
+## Why It Matters
 
-This crate implements audio metering for ternary signals: peak detection (maximum absolute value), RMS (the "average loudness"), crest factor (peak/RMS — the dynamic range indicator), clipping detection, and zero-crossing rate (how often the signal changes sign, a proxy for frequency content).
+Ternary signals {-1, 0, +1} arise naturally in delta-sigma modulation, ternary logic circuits, and the ternary agent ecosystem. Analyzing their statistical properties — energy distribution, spectral content, stereo coherence — is essential for evaluating agent communication channels, detecting signal degradation, and measuring the "health" of ternary data streams.
 
-## What's Inside
+These metrics are the audio-engineering analogues of the population statistics used in ternary agent systems: RMS measures average energy, crest factor measures dynamic range, and zero-crossing rate approximates spectral centroid.
 
-- **`VuMeter`** — tracks peak, RMS, and sample count across a signal
-- **`peak(signal)`** — maximum absolute value (0 or 1 for ternary)
-- **`rms(signal)`** — root mean square. The "average energy"
-- **`crest_factor(signal)`** — peak/RMS ratio. Drums ≈ 4-6. Sustained pad ≈ 1.0
-- **`clip_count(signal)`** — how many samples are at ±1 (maximum level)
-- **`headroom(signal)`** — how much room before everything is ±1
-- **`zero_crossing_rate(signal)`** — how often the signal passes through 0 (frequency proxy)
-- **`DynamicRange`** — the difference between loudest and quietest moments
+## How It Works
 
-## Quick Example
+### Peak Amplitude
+
+```
+peak(x) = max(|x_i|),  x_i ∈ {-1, 0, +1}
+```
+
+Since |x_i| ≤ 1, peak ∈ {0, 1}. Peak = 0 indicates silence.
+
+- **Complexity:** O(n)
+
+### RMS (Root Mean Square)
+
+```
+RMS(x) = √( (1/n) Σᵢ x_i² )
+```
+
+For ternary signals, x_i² ∈ {0, 1}, so RMS = √(fraction of non-zero samples).
+
+- **Complexity:** O(n)
+- **Range:** [0, 1]
+
+### Crest Factor
+
+```
+CF(x) = peak(x) / RMS(x)
+```
+
+- **Range:** [1, ∞) for non-silent signals
+- CF = 1: constant-amplitude signal (all ±1)
+- High CF: sparse impulses amid silence
+- Returns 0.0 for silent signals (RMS = 0)
+
+### Zero-Crossing Rate
+
+```
+ZCR(x) = (1/(n−1)) · |{ i : sign(x_i) ≠ sign(x_{i+1}) }|
+```
+
+Where sign is defined on the ternary alphabet: negative (−1) vs. non-negative (0, +1).
+
+- **Complexity:** O(n)
+- **Range:** [0, 1]
+- High ZCR → high-frequency content; ZCR ≈ 0 → DC or low-frequency
+
+### DC Offset
+
+```
+DC(x) = (1/n) Σᵢ x_i
+```
+
+- **Range:** [−1, +1]
+- DC = 0: balanced signal (equal +1 and −1)
+- DC > 0: positive bias; DC < 0: negative bias
+
+### Stereo Balance
+
+```
+balance(L, R) = (E_R − E_L) / (E_L + E_R)
+```
+
+Where E = mean squared energy. This is the normalized energy difference:
+
+- **Range:** [−1, +1]
+- −1: full left, 0: centered, +1: full right
+
+### Stereo Correlation
+
+Pearson correlation between left and right channels:
+
+```
+ρ(L, R) = Σᵢ(L_i − L̄)(R_i − R̄) / √(Σᵢ(L_i − L̄)² · Σᵢ(R_i − R̄)²)
+```
+
+- **Range:** [−1, +1]
+- +1: identical channels (mono)
+- 0: uncorrelated
+- −1: phase-inverted
+
+### Spectral Centroid (Proxy)
+
+```
+SC(x) = ZCR(x) × peak(x)
+```
+
+A rough brightness proxy: higher ZCR × peak = more high-frequency energy at full amplitude.
+
+## Quick Start
 
 ```rust
 use ternary_vu::*;
 
-let drums = vec![1, 0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0];
-let pad = vec![1, 1, 1, 1, -1, -1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1];
+let signal = vec![1, -1, 0, 1, -1, 1, 0, -1];
 
-println!("Drums RMS: {:.3}", rms(&drums));  // Low RMS — mostly silent
-println!("Pad RMS: {:.3}", rms(&pad));      // High RMS — always active
+println!("Peak:   {:.3}", peak(&signal));      // 1.0
+println!("RMS:    {:.3}", rms(&signal));        // ~0.707
+println!("Crest:  {:.3}", crest_factor(&signal));
+println!("ZCR:    {:.3}", zero_crossing_rate(&signal));
+println!("DC:     {:.3}", dc_offset(&signal));
 
-println!("Drums crest: {:.2}", crest_factor(&drums));  // High — transient
-println!("Pad crest: {:.2}", crest_factor(&pad));      // ~1.0 — sustained
-
-println!("Drums ZCR: {}", zero_crossing_rate(&drums)); // Low — slow changes
-println!("Pad ZCR: {}", zero_crossing_rate(&pad));     // Higher — more transitions
+// Stereo analysis
+let left  = vec![1, -1, 0, 1];
+let right = vec![1, -1, 0, 1];
+println!("Balance:     {:.3}", balance(&left, &right));  // 0.0 (centered)
+println!("Correlation: {:.3}", correlation(&left, &right)); // 1.0 (identical)
 ```
 
-## The Deeper Truth
+## API
 
-**Ternary metering is quantized but decisive.** In continuous audio, RMS varies smoothly from 0 to 1. In ternary, it can only take specific values determined by the ratio of {-1, 0, +1} in the signal window. A signal that's ⅓ each state has RMS = √(2/3) ≈ 0.816. A signal that's all ±1 has RMS = 1.0. A signal that's all 0 has RMS = 0.0. There are only a few possible meter readings — and each one tells you exactly what's happening.
+| Function | Input | Returns |
+|---|---|---|
+| `peak` | `&[i8]` | `f64` ∈ {0, 1} |
+| `rms` | `&[i8]` | `f64` ∈ [0, 1] |
+| `crest_factor` | `&[i8]` | `f64` ∈ [1, ∞) or 0 |
+| `zero_crossing_rate` | `&[i8]` | `f64` ∈ [0, 1] |
+| `dc_offset` | `&[i8]` | `f64` ∈ [−1, +1] |
+| `balance` | `&[i8], &[i8]` | `f64` ∈ [−1, +1] |
+| `correlation` | `&[i8], &[i8]` | `f64` ∈ [−1, +1] |
+| `spectrum_centroid` | `&[i8]` | `f64` (brightness proxy) |
 
-The crest factor is the most musical meter: it distinguishes between *how* a signal is loud. Two signals with the same peak can have completely different crest factors. A drum hit (brief, loud, surrounded by silence) has high crest. A distorted guitar (constantly loud) has low crest. The crest factor tells you whether the signal is *dynamic* (interesting) or *compressed* (flat). In mixing, it's the single most important number for deciding what needs compression or expansion.
+## Architecture Notes
 
-The zero-crossing rate is a secret weapon for genre detection: high ZCR = bright/noisy (hi-hats, distortion), low ZCR = dark/smooth (bass, pads). In ternary, it's the easiest proxy for spectral content without doing an actual FFT.
+The DC offset metric is directly related to the **γ + η = C** conservation law. For a ternary signal, the DC offset equals (count of +1 − count of −1) / n, which is the net ternary bias. When the signal represents an agent population — γ fraction at +1, η fraction at −1 — the DC offset is (γ − η) / (γ + η + neutrals). A DC offset of 0 means γ = η, satisfying the symmetric conservation point where the population is evenly split between choose and avoid.
 
-**Use cases:**
-- **Audio metering** — measure signal levels in ternary audio chains
-- **Mixing** — balance levels between tracks using RMS and peak
-- **Dynamic processing** — set gate/compressor thresholds using crest factor
-- **Signal health** — detect clipping (all ±1) or silence (all 0)
-- **Genre detection** — ZCR as a timbre classifier
+The RMS metric provides the "active fraction" √((γ + η) / total), quantifying how much of the population is non-neutral.
 
-## See Also
+## References
 
-- **ternary-gate** — gating decisions based on VU measurements
-- **ternary-mixer** — mixing multiple signals (needs metering to avoid clipping)
-- **ternary-echo** — echo changes the RMS and crest factor
-- **ternary-bite** — degradation changes all meter readings
-- **ternary-rack** — meter between processing stages in the signal chain
-
-## Install
-
-```bash
-cargo add ternary-vu
-```
+- Smith, J. O. (2011). *Spectral Audio Signal Processing.* W3K Publishing. — RMS, crest factor, spectral centroid.
+- ITU-R BS.468-4 (1970). *"Measurement of Audio-Frequency Noise Voltage Level in Sound Broadcasting."*
+- Brandenburg, K. & Stoll, G. (1994). *"The ISO/MPEG-Audio Layer-3 Codec."* — ZCR as spectral proxy.
 
 ## License
 
